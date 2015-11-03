@@ -2,8 +2,8 @@
 
 ## Wifi Reconnector
 
-[ [source](https://bitbucket.org/agioia/wire) /
-[git](https://bitbucket.org/agioia/wire.git) ]
+[ [home](https://github.com/antoniogioiacom/wire) /
+[source](https://github.com/antoniogioiacom/wire.git) ]
 
 ### what is wire
 
@@ -16,9 +16,9 @@ tested on linux debian >7 with a single or more wireless devices connected.
 
 ### wire in action
 
-![wire in action](http://antoniogioia.neocities.org/stuff/wire004a.jpg)
+![wire in action](http://antoniogioia.neocities.org/stuff/wire001a.jpg)
 
-![wire in action](http://antoniogioia.neocities.org/stuff/wire004b.jpg)
+![wire in action](http://antoniogioia.neocities.org/stuff/wire001b.jpg)
 
 
 ### use case
@@ -49,7 +49,7 @@ then configure `/etc/wpa_supplicant/wpa_supplicant.conf` with the necessary conn
       psk="myinternetpassword"
     }
 
-- download the code (`git clone https://bitbucket.org/agioia/wire.git`) or copy the source in a text file (name it `wire`)
+- download the code (`git clone https://github.com/antoniogioiacom/wire.git`) or copy the source in a text file (name it `wire`)
 - move it in `/usr/local/bin`
 - and make it executable with `sudo chmod +x /usr/local/bin/wire`
 

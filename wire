@@ -9,7 +9,7 @@ refresh=1
 # log
 save_log=false
 current_user=$(who am i | awk '{print $1}')  # do not change
-log_id=$(date +"%s" | tail -c 6)            # do not change
+log_id=$(date +"%s" | tail -c 6)             # do not change
 log=/home/$current_user/wire-$log_id.log
 
 # script variables
@@ -466,7 +466,6 @@ function connection_info {
   line
   echo " Connected at : "$date_restored
   echo " Connected to : "$essid"("$ap")"
-  #echo " Connected to : \"WirelessNetwork\" (06:0A:AA:11:00:AB)"
   echo " IP address   : "$ip_and_sub
   echo " Channel      : "$channel_and_freq
   echo -n " Link quality : "
@@ -537,7 +536,7 @@ function banner {
 }
 
 # WiRe
-# https://bitbucket.org/agioia/wire
+# https://github.com/antoniogioiacom/wire
 # antoniogioia.com
 
 wire_start
