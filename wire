@@ -3,7 +3,7 @@
 # customizable variables
 mode="managed"        # interface mode
 ping_test=8.8.8.8     # default google dns
-interval=12           # time (in seconds) = refresh * interval
+interval=120          # 2 minutes, time (in seconds) = refresh * interval
 refresh=1
 
 # log
