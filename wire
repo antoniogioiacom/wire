@@ -3,537 +3,610 @@
 # customizable variables
 mode="managed"        # interface mode
 ping_test=8.8.8.8     # default google dns
-interval=120          # time (in seconds) = refresh * interval
+interval=12           # time (in seconds) = refresh * interval
 refresh=1
 
 # log
 save_log=false
-current_user=$(who am i | awk '{print $1}')  # do not change
-log_id=$(date +"%s" | tail -c 6)             # do not change
+current_user=$(who am i | awk '{print $1}')
+log_id=$(date +"%s" | tail -c 6)
 log=/home/$current_user/wire-$log_id.log
+
+# wpasupplicant config
+wpa_supplicant_file="/etc/wpa_supplicant/wpa_supplicant.conf"
 
 # script variables
 count_blocked=0
-max_blocked=10
-max_dhcp=15
+timeout_blocked=10
+timeout_dhcp=15
+count_dhcp_times=0
+timeout_dhcp_times=5
 count_ping=1
 count_total_ping=0
-max_ping=4
-max_state=12
+timeout_ping=2
+count_ping_loop_times=0
+timeout_ping_loop_times=3
 pause=3
 interface=$1
 count_active="-1"
 initiated=$(date +"%D - %r")
-version="0.0.1"
 interval_visual=$(($refresh * $interval))
+version="0.0.2"
 
 trap wire_end EXIT
 
-function wire_start {
-  banner
-  if [ $(id -u) != "0" ]; then
-      echo -e " [\e[90m"$(date +"%T")"\e[0m] \e[31mYou have to run this script as root or with sudo!\e[0m" >&2
-      write_log="no"
+# wire
+
+  function wire_start {
+    clear
+    banner
+    if [ $(id -u) != "0" ]; then
+        echo -e " [\e[90m"$(date +"%T")"\e[0m] \e[31mYou have to run this script as root or with sudo!\e[0m" >&2
+        write_log="no"
+        line
+        exit 1
+    fi
+    if [ "$save_log" != true ]; then
+      log=/dev/null
+    fi
+    if [ ! "$interface" ]; then
+      echo -n " Enter network interface to use (example: wlan0): "; read interface;
       line
-      exit 1
-  fi
-  if [ "$save_log" != true ]; then
-    log=/dev/null
-  fi
-  echo " ["$initiated"] WiRe initiated" >> $log
-  interface_id
-}
+    fi
+    echo " ["$initiated"] WiRe initiated" >> $log
+    interface_id
+  }
 
-function wire_end {
-  if [ ! "$write_log" = "no" ]; then
-    echo " ["$(date +"%D - %r")"] WiRe terminated" >> $log
-  fi
-}
+  function wire_end {
+    if [ ! "$write_log" = "no" ]; then
+      echo " ["$(date +"%D - %r")"] WiRe terminated" >> $log
+    fi
+  }
 
-function interface_print {
-  echo -e " [\e[90m"$(date +"%T")"\e[0m] Interface: \e[1m"$interface"\e[0m"
-}
+  function init {
+    echo " ["$(date +"%r")"] Interface: "$interface >> $log
+    interface_print
+    dhcp
+  }
 
-function interface_id {
-  if [ ! "$interface" ]; then
-    echo -n " Enter network interface to use (example: wlan0): "; read interface;
+# setup
+
+  function setup_application_start {
+    if [ -x /usr/sbin/NetworkManager ]; then
+      setup_application_conflict
+    elif [ -x /usr/sbin/wicd ]; then
+      setup_application_conflict
+    elif [ -x /usr/sbin/connmand ]; then
+      setup_application_conflict
+    else
+      iw_verify
+    fi
+  }
+
+  function setup_application_conflict {
+    echo -e " [\e[90m"$(date +"%T")"\e[0m] \e[31mYou cannot use wire together with NetworkManager, wicd or ConnMan \e[0m" >&2
+    write_log="no"
     line
+    exit 1
+  }
+
+  function setup_application_exit {
+    echo -e " \e[31mIf you are missing required software, install with: \n \e[1msudo apt-get install iw wpasupplicant\e[0m\e[0m" >&2
+    write_log="no"
+    line
+    exit 1
+  }
+
+  function iw_verify {
+    if [ -x /sbin/iw ]; then
+      wpasupplicant_verify
+    else
+      echo -e " \e[31miw not installed \e[0m"
+      setup_application_exit
+    fi
+  }
+
+  function wpasupplicant_verify {
+    if [ -x /sbin/wpa_supplicant ]; then
+      wpasupplicant_conf_verify
+    else
+      echo -e " \e[31mWpasupplicant not installed \e[0m"
+      setup_application_exit
+    fi
+  }
+
+  function wpasupplicant_conf_verify {
+    if [ -e "$wpa_supplicant_file" ]; then
+      ssid_check=$(cat $wpa_supplicant_file | grep ssid)
+      if [ "$ssid_check" != "" ]; then
+        wpasupplicant_start
+      else
+        echo -e " \e[31mWpasupplicant config file does not contain networks \e[0m"
+        echo " Config file: "$wpa_supplicant_file
+        line
+        echo " Add a network to config file. Example:"
+        echo -e "\n\e[90mnetwork={"
+        echo "  ssid=\"MyWirelessNetwork\""
+        echo "  psk=\"myinternetpassword\""
+        echo -e "}\e[0m\n"
+        line
+        setup_application_exit
+      fi
+    else
+      echo -e " \e[31mWpasupplicant config file not found \e[0m"
+      echo " File missing: "$wpa_supplicant_file
+      setup_application_exit
+    fi
+  }
+
+  function wpasupplicant_enable {
+    wpa_supplicant -B -i $interface -c $wpa_supplicant_file  &> /dev/null
+    if [ $? = 0 ]; then
+      init
+    else
+      echo -e " \e[31mUnable to configure wpasupplicant \e[0m"
+      setup_application_exit
+    fi
+
+  }
+
+  function wpasupplicant_start {
+    if [ ! "$(pidof wpa_supplicant)" ]; then
+      wpasupplicant_enable
+    fi
     init
-  else
+  }
+
+  function verify_nameserver {
+    echo
+  }
+
+# interface
+
+  function interface_id {
     ip link show $interface &> /dev/null
     if [ $? != 0 ]; then
         echo -e " [\e[90m"$(date +"%T")"\e[0m] \e[31mInterface "$interface "does not exist or is not plugged in\e[0m"
         line
-        interface_rfkill
+        interface_not_working
         exit 1
     else
-      init
+      setup_application_start
     fi
-  fi
-}
+  }
 
-function init {
-  echo " ["$(date +"%r")"] Interface: "$interface >> $log
-  interface_print
-  interface_uplink
-}
+  function interface_print {
+    echo -e " [\e[90m"$(date +"%T")"\e[0m] Interface: \e[1m"$interface"\e[0m"
+  }
 
-function interface_uplink {
-  echo -en " [\e[90m"$(date +"%T")"\e[0m] Check uplink: "
-  iw dev $interface link &> /dev/null
-  if [ $? = 0 ]; then
-    echo -e "\e[32mok\e[0m"
-    interface_ip
-  else
-    echo -e "\e[31mno uplink\e[0m"
-    interface_exists
-  fi
-}
-
-function interface_ip {
-  sleep 1
-  echo -en " [\e[90m"$(date +"%T")"\e[0m] Check IP address: "
-  ifconfig $interface | grep -Po '\b(?!255)(?:\d{1,3}\.){3}(?!255)\d{1,3}\b'
-  if [ $? = 0 ]; then
-    interface_ping
-  else
-    echo -e "\e[31mno address\e[0m"
-    interface_blocked
-  fi
-} 2> /dev/null
-
-function interface_exists {
-  echo -en " [\e[90m"$(date +"%T")"\e[0m] Check interface: "
-  ip link show $interface &> /dev/null
-  if [ $? = 0 ]; then
-    echo -e "\e[32mok\e[0m"
-    interface_flush
-  else
-    echo -e "\e[31mblocked\e[0m"
-    interface_blocked
-  fi
-}
-
-function interface_restart {
-  echo -en " [\e[90m"$(date +"%T")"\e[0m] Restart networking: "
-  /etc/init.d/networking restart &> /dev/null
-  if [ $? = 0 ]; then
-    echo -e "\e[32mok\e[0m"
-    interface_exists
-  else
-    echo -e "\e[31mblocked\e[0m"
-    interface_blocked
-  fi
-}
-
-function interface_down {
-  echo -en " [\e[90m"$(date +"%T")"\e[0m] Interface down: "
-  ip link set $interface down &> /dev/null
-  if [ $? = 0 ]; then
-    echo -e "\e[32mok\e[0m"
-    interface_mode
-  else
-    echo -e "\e[31mblocked\e[0m"
-    interface_blocked
-  fi
-}
-
-function interface_flush {
-  echo -en " [\e[90m"$(date +"%T")"\e[0m] Flush address: "
-  dhclient -r $interface &> /dev/null
-  sleep $pause
-  ip addr flush dev $interface &> /dev/null
-  if [ $? = 0 ]; then
-    echo -e "\e[32mok\e[0m"
-    interface_down
-  else
-    echo -e "\e[31mblocked\e[0m"
-    interface_blocked
-  fi
-}
-
-function interface_mode {
-  echo -en " [\e[90m"$(date +"%T")"\e[0m] Interface mode: "
-  iwconfig $interface mode $mode &> /dev/null
-  if [ $? = 0 ]; then
-    echo -e "\e[32m"$mode"\e[0m"
-    interface_up
-  else
-    echo -e "\e[31mblocked\e[0m"
-    interface_blocked
-  fi
-}
-
-function interface_up {
-  echo -en " [\e[90m"$(date +"%T")"\e[0m] Interface up: "
-  ip link set dev $interface up &> /dev/null
-  if [ $? = 0 ]; then
-    echo -e "\e[32mok\e[0m"
-    interface_tune
-  else
-    echo -e "\e[31mblocked\e[0m"
-    interface_blocked
-  fi
-}
-
-function interface_tune {
-  # to be extended
-  echo -en " [\e[90m"$(date +"%T")"\e[0m] Interface configuration: "
-  iwconfig $interface channel auto &> /dev/null
-  if [ $? = 0 ]; then
-    echo -e "\e[32mok\e[0m"
-    state=$(wpa_cli -i $interface status | grep "wpa_state" | awk -F "=" '{print $2}')
-    if [ "$state" = "COMPLETED" ]; then
-        interface_reassociate
+  function setup_interface_start {
+    count_dhcp_times=0
+    count_ping_loop_times=0
+    echo -en " [\e[90m"$(date +"%T")"\e[0m] Interface: "
+    sleep 1.5
+    ip link show $interface &> /dev/null
+    if [ $? = 0 ]; then
+      echo -e "\e[32mok\e[0m"
+      interface_flush
     else
-      interface_assign
-    fi
-  else
-    echo -e "\e[31mblocked\e[0m"
-    interface_blocked
-  fi
-}
-
-function interface_assign {
-  echo -en " [\e[90m"$(date +"%T")"\e[0m] Set interface: "
-  wpa_cli -i $interface interface $interface &> /dev/null
-  if [ $? = 0 ]; then
-    echo -e "\e[32mok\e[0m"
-    interface_reassociate
-  else
-    echo -e "\e[31mblocked\e[0m"
-    interface_blocked
-  fi
-}
-
-function interface_associate {
-  echo -en " [\e[90m"$(date +"%T")"\e[0m] Attempt to associate: "
-  iwconfig $interface ap any &> /dev/null
-  if [ $? = 0 ]; then
-    echo -e "\e[32mok\e[0m"
-    count_blocked=0
-    interface_wpastate
-  else
-    echo -e "\e[31mnot successful\e[0m"
-    interface_ip
-  fi
-}
-
-function interface_reassociate {
-  echo -en " [\e[90m"$(date +"%T")"\e[0m] Attempt to reassociate: "
-  wpa_cli -i $interface reassociate &> /dev/null
-  if [ $? = 0 ]; then
-    echo -e "\e[32mok\e[0m"
-    interface_wpastate
-  else
-    echo -e "\e[31mnot successful\e[0m"
-    interface_flush
-  fi
-}
-
-function interface_wpastate {
-  count_state=0
-  echo -e " [\e[90m"$(date +"%T")"\e[0m] WPA state: "
-  while true; do
-    count_state=$((count_state + 1))
-    state=$(wpa_cli -i $interface status | grep "wpa_state" | awk -F "=" '{print $2}')
-    echo -e " [\e[90m"$(date +"%T")"\e[0m] ~ "$state
-    if [ "$count_state" -eq "$max_state" ]; then
-      please_wait
-      count_state=0
-    fi
-    if [ "$state" = "COMPLETED" ]; then
-      dhcp
-      break 1
-    elif [ "$state" = "DISCONNECTED" ]; then
-      interface_reassociate
-      break 1
-    elif [ "$state" = "INTERFACE_DISABLED" ]; then
-      sleep $pause
-      count_blocked=0
+      echo -e "\e[31mblocked\e[0m"
       interface_blocked
-      break 1
-    else
-      state="none"
-      sleep 1
     fi
-  done
-}
+  }
 
-function interface_blocked {
-  echo -e " [\e[90m"$(date +"%T")"\e[0m] \e[31mInterface not responding\e[0m"
-  please_wait
-  while true; do
-    state=$(wpa_cli -i $interface status | grep "wpa_state" | awk -F "=" '{print $2}')
-    echo -e " [\e[90m"$(date +"%T")"\e[0m] ~ "$state
-    if [ "$count_blocked" -le "$max_blocked" ]; then
-      if [ "$state" = "INTERFACE_DISABLED" ]; then
-        count_blocked=$((count_blocked + 1))
-        wpa_cli -i $interface scan &> /dev/null
-        sleep 1
+  function interface_flush {
+    echo -en " [\e[90m"$(date +"%T")"\e[0m] Disconnect: "
+    sleep 1.5
+    dhclient -r $interface &> /dev/null
+    sleep $pause
+    ip addr flush dev $interface &> /dev/null
+    if [ $? = 0 ]; then
+      echo -e "\e[32mok\e[0m"
+      interface_down
+    else
+      echo -e "\e[31mblocked\e[0m"
+      interface_blocked
+    fi
+  }
+
+  function interface_down {
+    echo -en " [\e[90m"$(date +"%T")"\e[0m] Interface down: "
+    sleep 1.5
+    ip link set $interface down &> /dev/null
+    if [ $? = 0 ]; then
+      echo -e "\e[32mok\e[0m"
+      interface_mode
+    else
+      echo -e "\e[31mblocked\e[0m"
+      interface_blocked
+    fi
+  }
+
+  function interface_mode {
+    echo -en " [\e[90m"$(date +"%T")"\e[0m] Interface mode: "
+    sleep 1.5
+    iwconfig $interface mode $mode &> /dev/null
+    if [ $? = 0 ]; then
+      echo -e "\e[32m"$mode"\e[0m"
+      interface_up
+    else
+      echo -e "\e[31mblocked\e[0m"
+      interface_blocked
+    fi
+  }
+
+  function interface_up {
+    echo -en " [\e[90m"$(date +"%T")"\e[0m] Interface up: "
+    sleep 1.5
+    ip link set dev $interface up &> /dev/null
+    if [ $? = 0 ]; then
+      echo -e "\e[32mok\e[0m"
+      interface_tune
+    else
+      echo -e "\e[31mblocked\e[0m"
+      interface_blocked
+    fi
+  }
+
+  function interface_tune {
+    # to be extended
+    echo -en " [\e[90m"$(date +"%T")"\e[0m] Interface configuration: "
+    sleep 1.5
+    iwconfig $interface channel auto &> /dev/null
+    if [ $? = 0 ]; then
+      echo -e "\e[32mok\e[0m"
+      interface_associate
+    else
+      echo -e "\e[31mblocked\e[0m"
+      interface_blocked
+    fi
+  }
+
+  function interface_associate {
+    if [ "$count_ping_loop_times" -eq "$timeout_ping_loop_times" ]; then
+      setup_interface_start
+    fi
+    echo -en " [\e[90m"$(date +"%T")"\e[0m] Attempt to associate: "
+    sleep 1.5
+    iwconfig $interface ap any &> /dev/null
+    if [ $? = 0 ]; then
+      echo -en "\e[32mok\e[0m"
+      connection_verify
+    else
+      echo -e "\e[31mnot successful\e[0m"
+      interface_ip
+    fi
+  }
+
+  function interface_reassociate {
+    line
+    echo -en " [\e[90m"$(date +"%T")"\e[0m] Attempt to reassociate with: \e[1m"$current_essid"\e[0m: "
+    sleep 1.5
+    iwconfig $interface essid "$current_essid" &> /dev/null
+    if [ $? = 0 ]; then
+      echo -en "\e[32mok\e[0m"
+      connection_verify
+    else
+      echo -e "\e[31mnot successful\e[0m"
+      interface_ip
+    fi
+  }
+
+  function interface_ip {
+    sleep 1
+    echo -en " [\e[90m"$(date +"%T")"\e[0m] Check IP address: "
+    sleep 1.5
+    ifconfig $interface | grep -Po '\b(?!255)(?:\d{1,3}\.){3}(?!255)\d{1,3}\b'
+    if [ $? = 0 ]; then
+      interface_ping
+    else
+      echo -e "\e[31mno address\e[0m"
+      interface_blocked
+    fi
+  } 2> /dev/null
+
+  function interface_blocked {
+    echo -e " [\e[90m"$(date +"%T")"\e[0m] Interface not responding"
+    line
+    while true; do
+      if [ "$count_blocked" -eq "$timeout_blocked" ]; then
+        echo -e " [\e[90m"$(date +"%T")"\e[0m] Interface error"
+        interface_not_working
+        echo " ["$(date +"%r")"] Interface error" >> $log
+        exit 1
       else
-        sleep $pause
-        interface_restart
+        count_blocked=$((count_blocked + 1))
+        setup_interface_start
         break 1
       fi
-    else
-      echo -e " [\e[90m"$(date +"%T")"\e[0m] Interface error"
+    done
+  }
+
+  function interface_not_working {
+    echo " The following is the output of your /etc/network/interfaces "
+    echo -en "\e[90m"
+    sed '/^#/d;' /etc/network/interfaces
+    echo -e "\e[0m"
+    line
+    echo " Check your interface configuration. Example of correct /etc/network/interfaces"
+    echo -e "\n\e[90mauto wlan0"
+    echo "iface wlan0 inet manual"
+    echo -e "wpa-roam /etc/wpa_supplicant/wpa_supplicant.conf\e[0m\n"
+    line
+    if [ -x /usr/sbin/rfkill ]; then
+      echo " Check below if any wireless network interface is blocked."
+      echo " If interface is hard blocked you need to physically switch it on."
+      echo " You can try to unblock wifi interface(s) with the command: 'sudo rfkill unblock wifi'"
       line
-      interface_rfkill
-      echo " ["$(date +"%r")"] Interface error" >> $log
-      exit 1
+      echo -e "\e[90m"
+      rfkill list wifi
+      echo -e "\e[0m"
+      line
+    else
+      echo " Check if the wireless interface is switched on and not blocked by your system."
+      line
     fi
-    state="none"
-    sleep $pause
-  done
-}
+  }
 
-function interface_rfkill {
-  echo " Check below if any wireless network interface is blocked."
-  echo " If interface is hard blocked you need to physically switch it on."
-  echo " You can try to unblock wifi interface(s) with the command: 'sudo rfkill unblock wifi'"
-  line
-  rfkill list wifi
-  line
-}
+# dhcp
 
-function interface_disconnect {
-  echo -en " [\e[90m"$(date +"%T")"\e[0m] Interface disconnected: "
-  wpa_cli -i $interface disconnect &> /dev/null
-  if [ $? = 0 ]; then
-    echo -e "\e[32mok\e[0m"
-    interface_associate
-  else
-    echo -e "\e[31mblocked\e[0m"
-    interface_flush
-  fi
-}
+  function dhcp {
+    count_dhcp_times=$((count_dhcp_times + 1))
+    if [ "$count_dhcp_times" -eq "$timeout_dhcp_times" ]; then
+      setup_interface_start
+    else
+      line
+      echo -en " [\e[90m"$(date +"%T")"\e[0m] \e[33mSent dhcp request\e[0m"
+      dhclient -nw $interface &> /dev/null
+      sleep $pause
+      dhcp_verify
+    fi
+  }
 
-function interface_ping {
-  sleep 1
-  count_total_ping=$((count_total_ping + 1))
-  echo -en " [\e[90m"$(date +"%T")"\e[0m] Send PING to "$ping_test" from \e[1m"$interface"\e[0m ("$count_total_ping"): "
-  ping -I "$interface" -c 1 -n $ping_test &> /dev/null
-  if [ $? = 0 ]; then
-    echo -e "\e[32mok\e[0m"
-    line
-    sleep 1
-    connection_active
-  else
-    echo -e "\e[31mnot successful\e[0m"
-    sleep 1
-    interface_print
-    connection_lost
-  fi
-}
+  function dhcp_verify {
+    count_dhcp=0
+    while true; do
+      if [ "$count_dhcp" -le "$timeout_dhcp" ]; then
+        source_addr=$(ifconfig $interface | grep -Po '\b(?!255)(?:\d{1,3}\.){3}(?!255)\d{1,3}\b' 2> /dev/null)
+        if [ ! $source_addr = "" ]; then
+          echo
+          line
+          echo -e " [\e[90m"$(date +"%T")"\e[0m] IP address: "$source_addr
+          ping_loop
+          break 1
+        else
+          count_dhcp=$((count_dhcp + 1))
+          echo -en "\e[33m.\e[0m"
+        fi
+      else
+        echo
+        line
+        interface_associate
+        break 1
+      fi
+      sleep 1.5
+    done
+  }
 
-function interface_ping_active {
-  count_total_ping=$((count_total_ping + 1))
-  source_addr=$(ifconfig $interface | grep -Po '\b(?!255)(?:\d{1,3}\.){3}(?!255)\d{1,3}\b' 2> /dev/null)
-  echo -en " [\e[90m"$(date +"%T")"\e[0m] Send PING to "$ping_test" from \e[1m"$interface"\e[0m ("$count_total_ping"): "
-  ping -I "$source_addr" -c 1 -n $ping_test &> /dev/null
-  if [ $? = 0 ]; then
-    echo -e "\e[32mok\e[0m"
-    line
-    sleep 1
-    connection
-  else
-    echo -e "\e[31mnot successful\e[0m"
-    sleep 1
-    interface_print
-    connection_lost
-  fi
-}
+  # ping
 
-function interface_ping_loop {
-  sleep 1
-  if [ "$count_ping" -le "$max_ping" ]; then
+  function ping_single {
     count_total_ping=$((count_total_ping + 1))
     source_addr=$(ifconfig $interface | grep -Po '\b(?!255)(?:\d{1,3}\.){3}(?!255)\d{1,3}\b' 2> /dev/null)
-    echo -en " [\e[90m"$(date +"%T")"\e[0m] Send PING ("$count_ping"/"$max_ping") to "$ping_test" from \e[1m"$interface"\e[0m ("$count_total_ping"): "
+    if [ "$source_addr" = "" ]; then
+      source_def=$interface
+    else
+      source_def=$source_addr
+    fi
+    echo -en " [\e[90m"$(date +"%T")"\e[0m] Send PING to "$ping_test" from \e[1m"$source_def"\e[0m ("$count_total_ping"): "
+    ping -I "$source_def" -c 1 -n $ping_test &> /dev/null
+    if [ $? = 0 ]; then
+      echo -e "\e[32mok\e[0m"
+      line
+      sleep 1
+      connection_active
+    else
+      echo -e "\e[31mnot successful\e[0m"
+      dhcp
+    fi
+  }
+
+  function ping_single_active {
+    count_total_ping=$((count_total_ping + 1))
+    source_addr=$(ifconfig $interface | grep -Po '\b(?!255)(?:\d{1,3}\.){3}(?!255)\d{1,3}\b' 2> /dev/null)
+    echo -en " [\e[90m"$(date +"%T")"\e[0m] Send PING to "$ping_test" from \e[1m"$interface"\e[0m ("$count_total_ping"): "
     ping -I "$source_addr" -c 1 -n $ping_test &> /dev/null
     if [ $? = 0 ]; then
       echo -e "\e[32mok\e[0m"
-      sleep 1
-      count_ping=1
-      connection_active
-    else
-      count_ping=$((count_ping + 1))
-      echo -e "\e[31mnot successful\e[0m"
-      state=$(wpa_cli -i $interface status | grep "wpa_state" | awk -F "=" '{print $2}')
-      if [ ! "$state" = "COMPLETED" ]; then
-          count_ping=1
-          interface_disconnect
-      fi
-      interface_ping_loop
-      state="state"
-    fi
-  else
-    interface_print
-    count_ping=1
-    interface_flush
-  fi
-}
-
-function dhcp {
-  line
-  echo -en " [\e[90m"$(date +"%T")"\e[0m] \e[33mSent dhcp request\e[0m"
-  dhclient -nw $interface &> /dev/null
-  sleep $pause
-  dhcp_verify
-}
-
-function dhcp_verify {
-  count_dhcp=0
-  while true; do
-    if [ "$count_dhcp" -le "$max_dhcp" ]; then
-      source_addr=$(ifconfig $interface | grep -Po '\b(?!255)(?:\d{1,3}\.){3}(?!255)\d{1,3}\b' 2> /dev/null)
-      if [ ! $source_addr = "" ]; then
-        echo
-        line
-        echo -e " [\e[90m"$(date +"%T")"\e[0m] IP address: "$source_addr
-        interface_ping_loop
-        break 1
-      else
-        state=$(wpa_cli -i $interface status | grep "wpa_state" | awk -F "=" '{print $2}')
-        if [ "$state" = "INTERFACE_DISABLED" ]; then
-            echo
-            interface_blocked
-            break 1
-        fi
-        count_dhcp=$((count_dhcp + 1))
-        echo -en "\e[33m.\e[0m"
-        source_addr="none"
-      fi
-    else
-      echo
       line
-      interface_disconnect
-      break 1
+      sleep 1
+      connection
+    else
+      echo -e "\e[31mnot successful\e[0m"
+      line
+      connection_lost
     fi
-    sleep 1.5
-  done
-}
+  }
 
-function connection {
-  cicles=0
-  while true; do
-    if [ "$cicles" -lt "$interval" ]; then
-      signal_check=$(cat /proc/net/wireless | grep $interface)
-      if [ "$signal_check" = "" ]; then
-        connection_lost
-        break 1
+  function ping_loop {
+    if [ "$count_ping" -le "$timeout_ping" ]; then
+      count_total_ping=$((count_total_ping + 1))
+      source_addr=$(ifconfig $interface | grep -Po '\b(?!255)(?:\d{1,3}\.){3}(?!255)\d{1,3}\b' 2> /dev/null)
+      if [ "$source_addr" = "" ]; then
+        source_def=$interface
       else
-        print=$(output)
-        echo "$print"
+        source_def=$source_addr
+      fi
+      echo -en " [\e[90m"$(date +"%T")"\e[0m] Send PING ("$count_ping"/"$timeout_ping") to "$ping_test" from \e[1m"$source_def"\e[0m ("$count_total_ping"): "
+      ping -I "$source_def" -c 1 -n $ping_test &> /dev/null
+      if [ $? = 0 ]; then
+        echo -e "\e[32mok\e[0m"
+        count_ping=1
+        connection_active
+      else
+        count_ping=$((count_ping + 1))
+        echo -e "\e[31mnot successful\e[0m"
+        ping_loop
       fi
     else
-      cicles=0
-      interface_ping_active
-      break 1
+      line
+      please_wait
+      line
+      sleep $pause
+      count_ping=1
+      count_ping_loop_times=$((count_ping_loop_times + 1))
+      interface_associate
     fi
-    cicles=$((cicles + 1))
-    signal_check="none"
-    sleep $refresh
-  done
-}
+  }
 
-function connection_active {
-  date_restored=$(date +"%r")
-  echo " ["$date_restored"] Connection active after "$count_total_ping" attempt(s)" >> $log
-  count_active=$((count_active + 1))
-  count_total_ping=0
-  connection
-}
+  # connection
 
-function connection_lost {
-  clear
-  banner
-  date_lost=$(date +"%r")
-  echo " ["$date_lost"] Connection lost" >> $log
-  echo -e " [\e[90m"$(date +"%T")"\e[0m] Connection lost at: "$date_lost
-  line
-  interface_print
-  interface_associate
-}
+    function connection_verify {
+      count_cove=0
+      timeout_cove=5
+      while true; do
+        if [ "$count_cove" -lt "$timeout_cove" ]; then
+          check=$(iw dev $interface link | grep "SSID" 2> /dev/null)
+          if [ ! "$check" = "" ]; then
+            echo
+            line
+            echo -e " [\e[90m"$(date +"%T")"\e[0m] \e[33mNetwork\e[0m"
+            count_cove=0
+            line
+            echo ""$check
+            dhcp
+            break 1
+          else
+            count_cove=$((count_cove + 1))
+            echo -en "\e[32m.\e[0m"
+          fi
+        else
+          echo
+          line
+          ping_loop
+          break 1
+        fi
+        sleep 1.5
+      done
+    }
 
-function connection_info {
-  essid=$(iwconfig $interface | grep ESSID | awk -F: '{print $2}')
-  ap=$(iwconfig $interface | grep -i access | awk -F " " '{print $6}')
-  ip_and_sub=$(ip addr show $interface | grep 'inet ' | awk '{print $2}' | cut -f1)
-  channel_and_freq=$(iw $interface info | grep -i "channel" | awk -F " " '{print $2" "$3"MHz)"}')
-  echo " Interface    : "$interface
-  line
-  echo " Connected at : "$date_restored
-  echo " Connected to : "$essid"("$ap")"
-  echo " IP address   : "$ip_and_sub
-  echo " Channel      : "$channel_and_freq
-  echo -n " Link quality : "
-  link_quality
-  echo -n " Signal level : "
-  signal_level
-}
+    function connection_active {
+      date_restored=$(date +"%r")
+      echo " ["$date_restored"] Connection active after "$count_total_ping" attempt(s)" >> $log
+      count_active=$((count_active + 1))
+      count_total_ping=0
+      count_blocked=0
+      current_essid=$(iw dev $interface link | grep "SSID" | awk -F "SSID: " '{print $2}')
+      connection
+    }
 
-function link_quality {
-  link=$(iwconfig $interface | grep -i "link" | awk -F "=" '{print $2}' | awk -F " " '{print $1}' | awk -F "/" '{print $1 / 70 * 100}')
-  int=$(echo "($link + 0.5) / 1" | bc)
-  if [ $int -ge 0 ] && [ $int -le 30 ]; then
-    echo -e "\e[31m\u2022\e[0m "$int"%"
-  elif [ $int -ge 30 ] && [ $int -le 60 ]; then
-    echo -e "\e[33m\u2022\e[0m "$int"%"
-  elif [ $int -ge 60 ] && [ $int -le 100 ]; then
-    echo -e "\e[32m\u2022\e[0m "$int"%"
-  else
-    echo $int"%"
-  fi
-}
+    function connection_lost {
+      date_lost=$(date +"%r")
+      echo " ["$date_lost"] Connection lost" >> $log
+      echo -e " [\e[90m"$(date +"%T")"\e[0m] \e[1mConnection lost from "$current_essid" at: "$date_lost"\e[0m"
+      interface_reassociate
+    }
 
-function signal_level {
-  signal=$(iwconfig $interface | grep -i "signal" | awk -F "=" '{print $3}' | awk -F " " '{print $1}')
-  level=$(echo "($signal + 0.5) / 1" | bc | sed 's/-//g')
-  if [ $level -ge 72 ] && [ $level -le 100 ]; then
-    echo -e "\e[31m\u2022\e[0m -"$level"dBm"
-  elif [ $level -ge 58 ] && [ $level -le 72 ]; then
-    echo -e "\e[33m\u2022\e[0m -"$level"dBm"
-  elif [ $level -ge 0 ] && [ $level -le 58 ]; then
-    echo -e "\e[32m\u2022\e[0m -"$level"dBm"
-  else
-    echo "-"$level"dBm"
-  fi
-}
+    function connection {
+      cicles=0
+      while true; do
+        if [ "$cicles" -lt "$interval" ]; then
+          signal_check=$(cat /proc/net/wireless | grep $interface)
+          if [ "$signal_check" = "" ]; then
+            connection_lost
+            break 1
+          else
+            print=$(output)
+            echo "$print"
+          fi
+        else
+          cicles=0
+          ping_single_active
+          break 1
+        fi
+        cicles=$((cicles + 1))
+        signal_check="none"
+        sleep $refresh
+      done
+    }
 
-function please_wait {
-  line
-  echo -e " [\e[90m"$(date +"%T")"\e[0m] ~ \e[33mPlease wait\e[0m"
-  line
-  echo -e " [\e[90m"$(date +"%T")"\e[0m] ~ Reconnection in progress with \e[1m"$interface"\e[0m"
-}
+# output
 
-function output {
-  clear
-  banner
-  connection_info
-  line
-  echo " Restored     : "$count_active
-  echo " Interval     : "$interval_visual" (seconds)"
-  line
-}
+  function connection_info {
+    essid=$(iwconfig $interface | grep ESSID | awk -F: '{print $2}')
+    ap=$(iwconfig $interface | grep -i access | awk -F " " '{print $6}')
+    ip_and_sub=$(ip addr show $interface | grep 'inet ' | awk '{print $2}' | cut -f1)
+    channel_and_freq=$(iw dev $interface info | grep -i "channel" | awk -F " " '{print $2" "$3"MHz)"}')
+    echo " Interface    : "$interface
+    line
+    echo " Connected at : "$date_restored
+    echo " Connected to : "$essid"("$ap")"
+    echo " IP address   : "$ip_and_sub
+    echo " Channel      : "$channel_and_freq
+    echo -n " Link quality : "
+    link_quality
+    echo -n " Signal level : "
+    signal_level
+  }
 
-function line {
-  echo -e "\e[90m------------------------------------------------------------------------------------/\e[0m"
-}
+  function link_quality {
+    link=$(iwconfig $interface | grep -i "link" | awk -F "=" '{print $2}' | awk -F " " '{print $1}' | awk -F "/" '{print $1 / 70 * 100}')
+    int=$(echo "($link + 0.5) / 1" | bc)
+    if [ $int -ge 0 ] && [ $int -le 30 ]; then
+      echo -e "\e[31m\u2022\e[0m "$int"%"
+    elif [ $int -ge 30 ] && [ $int -le 60 ]; then
+      echo -e "\e[33m\u2022\e[0m "$int"%"
+    elif [ $int -ge 60 ] && [ $int -le 100 ]; then
+      echo -e "\e[32m\u2022\e[0m "$int"%"
+    else
+      echo $int"%"
+    fi
+  }
 
-function banner {
-  clear
-  line
-  echo -e "\e[39m\e[1m WiRe ("$version") ~ "$initiated" | Press Ctrl+C to exit"
-  if [ "$save_log" = true ]; then
-    echo -e " Log          : "$log"\e[0m\e[0m"
-  else
-  echo -en "\e[0m\e[0m"
-  fi
-  line
-}
+  function signal_level {
+    signal=$(iwconfig $interface | grep -i "signal" | awk -F "=" '{print $3}' | awk -F " " '{print $1}')
+    level=$(echo "($signal + 0.5) / 1" | bc | sed 's/-//g')
+    if [ $level -ge 72 ] && [ $level -le 100 ]; then
+      echo -e "\e[31m\u2022\e[0m -"$level"dBm"
+    elif [ $level -ge 58 ] && [ $level -le 72 ]; then
+      echo -e "\e[33m\u2022\e[0m -"$level"dBm"
+    elif [ $level -ge 0 ] && [ $level -le 58 ]; then
+      echo -e "\e[32m\u2022\e[0m -"$level"dBm"
+    else
+      echo "-"$level"dBm"
+    fi
+  }
+
+  function please_wait {
+    echo -e " [\e[90m"$(date +"%T")"\e[0m] \e[33mPlease wait\e[0m"
+    line
+    echo -e " [\e[90m"$(date +"%T")"\e[0m] Reconnection in progress with \e[1m"$interface"\e[0m"
+  }
+
+  function output {
+    clear
+    banner
+    connection_info
+    line
+    echo " Restored     : "$count_active
+    echo " Interval     : "$interval_visual" (seconds)"
+    line
+  }
+
+  function line {
+    echo -e "\e[90m------------------------------------------------------------------------------------/\e[0m"
+  }
+
+  function banner {
+    line
+    echo -e "\e[39m\e[1m WiRe ("$version") ~ "$initiated" | Press Ctrl+C to exit"
+    if [ "$save_log" = true ]; then
+      echo -e " Log          : "$log"\e[0m\e[0m"
+    else
+    echo -en "\e[0m\e[0m"
+    fi
+    line
+  }
 
 # WiRe
 # https://github.com/antoniogioiacom/wire
