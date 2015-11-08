@@ -1,4 +1,4 @@
-# WiRe 0.0.2
+# WiRe 0.0.3
 
 ## Wifi Reconnector
 
@@ -16,21 +16,84 @@ tested on linux debian >7 with a single or more wireless devices connected.
 
 ### wire in action
 
-![wire in action](http://antoniogioia.neocities.org/stuff/wire001a.jpg)
+#### output on screen: connection active, save_log=true
 
+    ------------------------------------------------------------------------------------/
+     WiRe (0.0.3) ~ 11/07/15 - 03:08:56 PM | Press Ctrl+C to exit
+     Log          : /home/user/wire-55823
+    ------------------------------------------------------------------------------------/
+     Interface    : wlan0
+    ------------------------------------------------------------------------------------/
+     Connected at : 04:08:10 PM
+     Connected to : "WirelessNetwork" (AA:1A:12:AA:AA:AA)
+     IP address   : 192.168.103.24/16
+     Key          : WPA2-PSK
+     Link quality : • 31%
+     Signal level : • -86dBm
+     Channel      : 5 (2432MHz)
+    ------------------------------------------------------------------------------------/
+     Received     : 5.23MB
+     Sent         : 48.47KB
+    ------------------------------------------------------------------------------------/
+     Restored     : 3
+     Errors       : 2
+     Interval     : 120 (seconds)
+    ------------------------------------------------------------------------------------/
 
-### use case
+- data is refreshed every ~second
+- link quality and signal level colored level
 
-you have a rpi with `wpasupplicant` installed in some remote place with really bad connectivity, you want to keep it connected as much as possible and you want to know what's going on.
+#### output on screen: connection lost
 
-you can run wire in a screen session with `sudo screen wire` and when you `ssh` (or login) into the rpi you can `screen -dr` the running screen session to get the output of wire with all the info you need to know.
+    ------------------------------------------------------------------------------------/
+     WiRe (0.0.3) ~ 11/07/15 - 03:08:47 PM | Press Ctrl+C to exit
+    ------------------------------------------------------------------------------------/
+     [16:41:24] Connection lost at 04:41:24 PM
+     [16:41:24] Attempt to reassociate with lost network....
+     [16:41:33] Sent dhcp request.........
+     [16:41:49] Scanning: ok
+     [16:41:51] Sent dhcp request
+     [16:41:54] IP address: 192.168.54.19
+     [16:41:54] Send PING (1/3) to google.com from 192.168.54.19 (1): ok
 
-additionally you can check the `log` file to know the exact time of any relevant connection activity.
+#### output on screen: errors
+
+    ------------------------------------------------------------------------------------/
+     WiRe (0.0.3) ~ 11/08/15 - 10:00:09 AM | Press Ctrl+C to exit
+    ------------------------------------------------------------------------------------/
+     [10:02:46] Interface: wlan0
+    ------------------------------------------------------------------------------------/
+     [10:02:46] Connection lost at 10:02:46 AM
+     [10:02:46] Attempt to reassociate with lost network
+    ------------------------------------------------------------------------------------/
+     [10:02:46] Connection problem (disabled)
+    ------------------------------------------------------------------------------------/
+     Errors              : 4
+    ------------------------------------------------------------------------------------/
+     Interface (wlan0)
+    ------------------------------------------------------------------------------------/
+     Disconnected        : 0
+     Disabled            : 3
+     Interface errors    : 1
+     WPA state errors    : 0
+     WPA state timeouts  : 0
+     No interface state  : 0
+    ------------------------------------------------------------------------------------/
+     Connection
+    ------------------------------------------------------------------------------------/
+     DHCP timeouts       : 0
+     DHCP loops timeout  : 0
+     Ping timeout        : 0
+     Ping loop timeout   : 0
+     Total restore pings : 0
+    ------------------------------------------------------------------------------------/
+     Undefined errors    : 0
+    ------------------------------------------------------------------------------------/
 
 
 ### how to install
 
-wire manages the connection in combination with `iw`, `ifconfig`, `dhclient` and `wpasupplicant` (if you miss them install with `sudo apt-get install iw wpasupplicant wireless-tools`).
+wire manages the connection in combination with `iw`, `ifconfig`, `dhclient` and `wpasupplicant` (if you miss them install with `sudo apt-get install iw wpasupplicant`, the rest of required dependencies are included by default in any linux distribution).
 
 you -cannot- run wire together with `network manager` or `wicd` or `ConnMan`.
 
@@ -59,10 +122,12 @@ you can start wire typing `sudo wire` in a console.
 open the script file with a text editor. at the top there are some variables you might want to change (default configuration is fine anyway):
 
 - `save_log`: `true` if you want to save connection activity to log file
-- `log`: path of log file defaults to user home directory
-- `ping_test`: a remote address you want to ping to check if connection is working
+- `save_ssid` : set `true` to save the ssid you connect to
+- `log_file`: path of log file defaults to user home directory
+- `ping_default`: a remote address / website you want to ping to check if connection is working
+- `nameserver_default`: nameserver used by default if none in `/etc/resolv.conf`
 - `interval`: the interval in ~seconds you want to test connectivity
-- `wpa_supplicant_file`: path to wpasupplicant config file
+- `wpa_supplicant_file`: path to wpasupplicant configuration file
 
 you have to run wire as `root` or with `sudo`.
 
@@ -74,9 +139,11 @@ or you can specify the interface:
 
 if you don't specify the network interface at start the program asks you to select one, type for example `wlan0`. no other user interaction is required, unless you want to stop the script with `Ctrl+C`.
 
-the script checks the state of the interface and of the connection automatically, in case of any errors repeats the checks until connection is back. to ensure the connection is really working a ping is sent every 60 seconds (change the variable `interval` as you prefer), if ping is not successful wire checks again interface and connection until are successfully restored.
+the script checks the state of the interface and of the connection automatically, in case of any errors repeats the checks until connection is back. to ensure the connection is really working a DNS lookup is sent every 60 seconds (change the variable `interval` as you prefer), if it's not successful wire checks again interface and connection until are successfully restored.
 
-it is not possible to choose a network to connect manually yet, the srippt uses wpasupplicant config file networks to try a connection. you have to modify that file to add a network and then restart wire.
+wire attempts also to optimize the configuration of the interface and of wpasupplicant. it is not possible to choose a network to connect manually (yet), the script uses the networks included in the wpasupplicant config file to try a connection. you have to modify that file to add a network and then restart wire.
+
+the current version of wire works fine but is not 100% tested and some code will definitely change in next version. 
 
 
 ### log
@@ -86,25 +153,38 @@ wire logs connection status on screen and on file.
 when connection is active screen reports connection status constantly refreshed: essid, ap, ip, channel and frequency, link quality, signal level, counters, ping attempts. if connection is not working a detailed log of reconnection attempts is shown.
 
 on log file are reported with a date relevant connection events, interface errors and program initiation and exit.
-example of saved entries:
+example of saved entries (with `save_ssid`=`true`):
 
-    [11/03/15 - 07:20:07 AM] WiRe initiated
-    [07:20:07 AM] Connection active after 1 attempt(s)
-    [07:21:47 AM] Connection lost
-    [07:21:52 AM] Connection active after 2 attempt(s)
-    [07:21:59 AM] Connection lost
-    [11/03/15 - 07:22:23 AM] WiRe terminated
-
-
-### notice
-
-wire is in early stage of development and in some edge cases might not work as expected.
+    [11/07/15 - 03:08:47 PM] WiRe initiated
+    [03:08:47 PM] Interval: 90 (seconds)
+    [03:08:50 PM] Interface: wlan1
+    [03:09:55 PM] Connection active after 4 attempt(s)
+    [03:09:56 PM] Connected to: "Network2"
+    [04:41:12 PM] Connection lost
+    [04:41:18 PM] Connection active after 12 attempt(s)
+    [04:41:19 PM] Connected to: "Network2"
+    [04:41:24 PM] Connection lost
+    [04:41:55 PM] Connection active after 3 attempt(s)
+    [11/07/15 - 04:41:56 PM] WiRe terminated
 
 
 ### todo
 
 - auto or manual network selection
 - interface tuning depending on conditions
+- download and upload speed test
+
+
+### why wire?
+
+there are many packages out there with similar / better functionalities. despite this i want to build my solution because:
+
+- i only want to install `iw` and `wpasupplicant` on my laptops / embedded devices, any other network manager is "too much", even more if based on GUI
+- i'm too lazy to type always the same commands and prepare the same configs on every device
+- i'm inspired by real world case since i currently live in a place with terrible internet uplink and i want to optimize connectivity and keep downloads up all the time, even if it's 1KB/s.
+- dealing with terrible internet connection on command line means typing the same commands multiple times. a script is your friend
+- programming a script means i can decide to output only what i really want to know about the connection   
+- i want to learn more about shell scripting (it's my second script ever but i'm not a linux beginner)
 
 
 ### author
