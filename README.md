@@ -174,7 +174,7 @@ or you can specify the interface and the ssid to connect:
 - `sudo wire wlan0 myhomenetwork`
 
 or you can specify `m` for manual selection of network:
-- `sudo wire wlan0 myhomenetwork`
+- `sudo wire wlan0 m`
 
 if you don't specify the network interface at start the program asks you to select one, type for example `wlan0`. no other user interaction is required, unless you want to stop the script with `Ctrl+C`.
 
@@ -207,7 +207,7 @@ example of saved entries (with `save_ssid`=`true`):
     [04:41:55 PM] Connection active after 3 attempt(s)
     [11/07/15 - 04:41:56 PM] WiRe terminated
 
-it it possible to read error and connection log at the end of any session as well.
+it it possible to read error and connection log before exit of a session as well.
 
 ### todo
 
