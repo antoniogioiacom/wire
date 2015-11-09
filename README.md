@@ -7,11 +7,16 @@
 
 ### what is wire
 
-wire is a bash script that can automatically restore a wireless internet connection if something goes wrong and never stops to check connectivity until you stop it. connection activity can be saved on log file.
+wire is a command line network manager that:
+- keeps tight control of wireless interface(s) and relative connections
+- makes sure are properly configured and tweaked
+- automatically restore connectivity if something goes wrong
+- never stops to check the state of the interface and of the connection until you stop it
+- can automatically scan for any network or only a specific one
+- shows on screen connection status, constantly updated
+- connection activity can be saved on a log file
 
-it's based on `ip`, `iw`, `wpasupplicant`, `ifconfig`, `dhclient`, `ping` and `rfkill`, all available by default on most linux ditributions.
-
-tested on linux debian >7 with a single or more wireless devices connected.
+it's based on `iw` and `wpasupplicant` and connects to the networks available in the wpasupplicant configuration file, check the "how to install" section below to know more.
 
 you can start wire including `interface` (example: wlan0) and `ssid` (example: myhomewifi) in the command:
 - `sudo wire wlan0 myhomewifi`
@@ -25,14 +30,20 @@ or you can manually select an available network with:
 or lazy way, you'll have to specify interface soon after
 - `sudo wire`
 
+wire runs in terminal, it's written in bash, no window manager/GUI required.
+
+tested on linux debian >7 with a single or more wireless devices connected.
+
 
 ### wire in action
+
+note: until stable release every update and/or commit can slightly change the output
 
 #### output on screen: connection active, save_log=true
 
     ------------------------------------------------------------------------------------/
      WiRe (0.0.3) ~ 11/07/15 - 03:08:56 PM | Press Ctrl+C to exit
-     Log          : /home/user/wire-55823
+     Log          : /tmp/wire-55823
     ------------------------------------------------------------------------------------/
      Interface    : wlan0
     ------------------------------------------------------------------------------------/
@@ -72,7 +83,7 @@ or lazy way, you'll have to specify interface soon after
 
     ------------------------------------------------------------------------------------/
      WiRe (0.0.3) ~ 11/08/15 - 07:05:17 PM | Press Ctrl+C to exit
-     Log          : /home/user/wire-27517
+     Log          : /tmp/wire-27517
     ------------------------------------------------------------------------------------/
      [19:05:17] System configuration: ok
     ------------------------------------------------------------------------------------/
@@ -92,33 +103,29 @@ or lazy way, you'll have to specify interface soon after
 #### output on screen: errors
 
     ------------------------------------------------------------------------------------/
-     WiRe (0.0.3) ~ 11/08/15 - 10:00:09 AM | Press Ctrl+C to exit
+     Error log
     ------------------------------------------------------------------------------------/
-     [10:02:46] Interface: wlan0
-    ------------------------------------------------------------------------------------/
-     [10:02:46] Connection lost at 10:02:46 AM
-     [10:02:46] Attempt to reassociate with lost network
-    ------------------------------------------------------------------------------------/
-     [10:02:46] Connection problem (disabled)
-    ------------------------------------------------------------------------------------/
-     Errors              : 4
+     Errors              : 26 (0)
     ------------------------------------------------------------------------------------/
      Interface (wlan0)
     ------------------------------------------------------------------------------------/
      Disconnected        : 0
-     Disabled            : 3
-     Interface errors    : 1
+     Disabled            : 1
+     Inactive            : 0
+     Interface errors    : 0
      WPA state errors    : 0
-     WPA state timeouts  : 0
-     No interface state  : 0
+     No response         : 0
+     Network resets      : 6
+     Network restarts    : 0
     ------------------------------------------------------------------------------------/
      Connection
     ------------------------------------------------------------------------------------/
-     DHCP timeouts       : 0
-     DHCP loops timeout  : 0
-     Ping timeout        : 0
-     Ping loop timeout   : 0
-     Total restore pings : 0
+     DHCP timeouts       : 7
+     Ping timeouts       : 7
+     Recover pings       : 0
+     Success pings       : 511
+     Failed pings        : 28
+     Total pings         : 539
     ------------------------------------------------------------------------------------/
      Undefined errors    : 0
     ------------------------------------------------------------------------------------/
@@ -126,7 +133,7 @@ or lazy way, you'll have to specify interface soon after
 
 ### how to install
 
-wire manages the connection in combination with `iw`, `ifconfig`, `dhclient` and `wpasupplicant` (if you miss them install with `sudo apt-get install iw wpasupplicant`, the rest of required dependencies are included by default in any linux distribution).
+wire manages the connection in combination with `iw`, `ifconfig`, `dhclient` and `wpasupplicant` (if you miss them install with `sudo apt-get install iw wpasupplicant wireless-tools`, the rest of required dependencies are included by default in any linux distribution).
 
 you -cannot- run wire together with `network manager` or `wicd` or `ConnMan`.
 
@@ -136,11 +143,18 @@ configure `/etc/network/interfaces` to use `wlan0` (or any other interface you a
     iface wlan0 inet manual
     wpa-roam /etc/wpa_supplicant/wpa_supplicant.conf
 
-then configure `/etc/wpa_supplicant/wpa_supplicant.conf` with the necessary connection parameters, you can add as many network as you want:
+then configure `/etc/wpa_supplicant/wpa_supplicant.conf` with the necessary connection parameters, you can add as many network blocks as you want:
 
     network={
       ssid="MyWirelessNetwork"
       psk="myinternetpassword"
+    }
+
+tip: with the following network block wire connects to any unsecured network as well
+
+    network={
+            key_mgmt=NONE
+            priority=-999
     }
 
 - download the code (`git clone https://github.com/antoniogioiacom/wire.git`) or copy the source in a text file (name it `wire`)
@@ -156,8 +170,8 @@ open the script file with a text editor. at the top there are some variables you
 
 - `save_log`: `true` if you want to save connection activity to log file
 - `save_ssid` : set `true` to save the ssid you connect to
-- `log_file`: path of log file defaults to user home directory
-- `ping_default`: a remote address / website you want to ping to check if connection is working
+- `log_file`: path of log file
+- `ping_default`: a remote host you want to ping to check if connection is working, tip: dns nameservers have faster response
 - `nameserver_default`: nameserver used by default if none in `/etc/resolv.conf`
 - `interval`: the interval in ~seconds you want to test connectivity
 - `wpa_supplicant_file`: path to wpasupplicant configuration file
@@ -207,7 +221,18 @@ example of saved entries (with `save_ssid`=`true`):
     [04:41:55 PM] Connection active after 3 attempt(s)
     [11/07/15 - 04:41:56 PM] WiRe terminated
 
-it it possible to read error and connection log before exit of a session as well.
+To exit wire press `Ctrl+C`, before the program closes it's possible to read error and connection log or check actual network and interface configuration. type `q` to quit and close wire.
+
+    ------------------------------------------------------------------------------------/
+    ^C Exit options:
+    ------------------------------------------------------------------------------------/
+     - e to show error log
+     - s to show saved networks
+     - n to show network configuration
+     - q to quit
+    ------------------------------------------------------------------------------------/
+     Type an option and press enter:
+
 
 ### todo
 
@@ -221,7 +246,7 @@ it it possible to read error and connection log before exit of a session as well
 
 there are many packages out there with similar / better functionalities. despite this i want to build my solution because:
 
-- i only want to install `iw` and `wpasupplicant` on my laptops / embedded devices, any other network manager is "too much", even more if based on GUI
+- i only want to install `wpasupplicant` and `iw` / `wireless-tools` on my laptops / embedded devices, any other network manager is "too much", even more if based on GUI
 - i'm too lazy to type always the same commands and prepare the same configs on every device
 - i'm inspired by real world case since i currently live in a place with terrible internet uplink and i want to optimize connectivity and keep downloads up all the time, even if it's 1KB/s.
 - dealing with terrible internet connection on command line means typing the same commands multiple times. a script is your friend
