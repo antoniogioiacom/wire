@@ -13,6 +13,18 @@ it's based on `ip`, `iw`, `wpasupplicant`, `ifconfig`, `dhclient`, `ping` and `r
 
 tested on linux debian >7 with a single or more wireless devices connected.
 
+you can start wire including `interface` (example: wlan0) and `ssid` (example: myhomewifi) in the command:
+- `sudo wire wlan0 myhomewifi`
+
+or you can specify only the interface and wire will automatically look for a network:
+- `sudo wire wlan0`
+
+or you can manually select an available network with:
+- `sudo wire wlan0 m`
+
+or lazy way, you'll have to specify interface soon after
+- `sudo wire`
+
 
 ### wire in action
 
@@ -55,6 +67,27 @@ tested on linux debian >7 with a single or more wireless devices connected.
      [16:41:51] Sent dhcp request
      [16:41:54] IP address: 192.168.54.19
      [16:41:54] Send PING (1/3) to google.com from 192.168.54.19 (1): ok
+
+#### output on screen: manual network selection
+
+    ------------------------------------------------------------------------------------/
+     WiRe (0.0.3) ~ 11/08/15 - 07:05:17 PM | Press Ctrl+C to exit
+     Log          : /home/user/wire-27517
+    ------------------------------------------------------------------------------------/
+     [19:05:17] System configuration: ok
+    ------------------------------------------------------------------------------------/
+     [19:05:21] DNS configuration: ok
+    ------------------------------------------------------------------------------------/
+     [19:05:22] Interface: wlan0
+    ------------------------------------------------------------------------------------/
+     [19:05:22] Scanning: ok
+    ------------------------------------------------------------------------------------/
+     [19:05:27] Select a network (type number)
+    ------------------------------------------------------------------------------------/
+    1) "H363EFGA2C14"                4) "linksys"
+    2) "Home.Network"                5) "BarOpenWIFI"
+    3) "Sitecom47E11A"
+    #?
 
 #### output on screen: errors
 
@@ -137,13 +170,20 @@ you can initiate the script with:
 or you can specify the interface:
 - `sudo wire wlan0`
 
+or you can specify the interface and the ssid to connect:
+- `sudo wire wlan0 myhomenetwork`
+
+or you can specify `m` for manual selection of network:
+- `sudo wire wlan0 myhomenetwork`
+
 if you don't specify the network interface at start the program asks you to select one, type for example `wlan0`. no other user interaction is required, unless you want to stop the script with `Ctrl+C`.
 
-the script checks the state of the interface and of the connection automatically, in case of any errors repeats the checks until connection is back. to ensure the connection is really working a DNS lookup is sent every 60 seconds (change the variable `interval` as you prefer), if it's not successful wire checks again interface and connection until are successfully restored.
+if you specify the `ssid` to connect every reconnection attempt targets the same ssid, instead if you only specify the interface every network in the wpasupplicant config will be used.
+if you start wire with the `m` option a list of available networks is shown and you have to select one typing relative number.  
 
-wire attempts also to optimize the configuration of the interface and of wpasupplicant. it is not possible to choose a network to connect manually (yet), the script uses the networks included in the wpasupplicant config file to try a connection. you have to modify that file to add a network and then restart wire.
+the script checks the state of the interface and of the connection automatically, attempting some tweaks. in case of any errors repeats the checks until connection is back. to ensure the connection is really working a DNS lookup is sent every 60 seconds (change the variable `interval` as you prefer), if it's not successful wire checks again interface and connection until are successfully restored.
 
-the current version of wire works fine but is not 100% tested and some code will definitely change in next version. 
+the current version of wire works fine but is not 100% tested and some code will definitely change in next version.
 
 
 ### log
@@ -167,10 +207,12 @@ example of saved entries (with `save_ssid`=`true`):
     [04:41:55 PM] Connection active after 3 attempt(s)
     [11/07/15 - 04:41:56 PM] WiRe terminated
 
+it it possible to read error and connection log at the end of any session as well.
 
 ### todo
 
-- auto or manual network selection
+- (improve) auto and manual network selection
+- (improve) error control
 - interface tuning depending on conditions
 - download and upload speed test
 

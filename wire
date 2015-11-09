@@ -1,5 +1,11 @@
 #!/bin/bash
 
+# wire
+# sudo wire <interface> <ssid>   # start wire and connect to ssid network
+# sudo wire <interface>          # start wire in automatic mode
+# sudo wire m                    # start wire in manual selection mode
+# sudo wire                      # start wire
+
 # wire version
 version="0.0.3"
 
@@ -10,17 +16,17 @@ version="0.0.3"
 # interval     : time interval (in seconds) of ping test
 # refresh      : total interval time in seconds = refresh * interval
 mode="managed"
-ping_default=google.com
+ping_default=8.8.8.8
 nameserver_default=8.8.8.8
-interval=25
+interval=120
 refresh=1
 
 # log
 # save_log  : set true to save log fileWiRe initiated
 # save_ssid : set true to save the ssid you connect to
 # log_file  : path to log file
-save_log=false
-save_ssid=false
+save_log=true
+save_ssid=true
 current_user=$(who am i | awk '{print $1}')
 log_id=$(date +"%s" | tail -c 6)
 log_file=/home/$current_user/wire-$log_id
@@ -32,6 +38,7 @@ wpa_supplicant_file="/etc/wpa_supplicant/wpa_supplicant.conf"
 # do not change
 wire_initiated=$(date +"%D - %r")
 interface=$1
+ssid=$2
 interval_visual=$(($refresh * $interval))
 restart=true
 pause_min=1.5
@@ -43,12 +50,12 @@ timeout_dhcp=8
 count_dhcp_loops=0
 timeout_dhcp_loops=5
 count_ping=0
-timeout_ping=2
+timeout_ping=3
 count_ping_loops=0
-timeout_ping_loops=3
-count_restore_pings=0
+timeout_ping_loops=4
+count_restore_pings=0 # review: count success and error pings
 count_state=0
-timeout_state=30
+timeout_state=25
 # error counters
 errors=0
 error_undefined=0
@@ -64,6 +71,7 @@ error_timeout_ping=0
 error_timeout_ping_loops=0
 
 trap wire_end EXIT
+trap wire_exit_options SIGINT
 
 # wire
 
@@ -96,7 +104,92 @@ trap wire_end EXIT
   function wire_init {
     echo " ["$(date +"%r")"] Interface: "$interface >> $log_file
     interface_print
-    dhcp
+    if [ "$ssid" = "" ]; then
+      dhcp
+    elif [ "$ssid" = "m" ]; then
+      setup_manual_selection
+    else
+      line
+      echo -e " \e[33mSSID: "$ssid"\e[0m"
+      line
+      setup_manual_ssid
+    fi
+  }
+
+  function wire_exit_options {
+    echo -e " \e[33mExit options: \e[0m"
+    line
+    if [ "$save_log" = "true" ]; then
+      echo -e " - \e[1ml\e[0m to show log"
+    fi
+    echo -e " - \e[1me\e[0m to show error log"
+    echo -e " - \e[1ms\e[0m to show saved networks"
+    echo -e " - \e[1mn\e[0m to show network configuration"
+    echo -e " - \e[1mq\e[0m to quit"
+    line
+    echo -n " Type an option and press enter: "; read option;
+    line
+    if [ "$option" = "q" ]; then
+      exit 1
+    elif [ "$option" = "e" ]; then
+      echo -e " \e[33mError log \e[0m"
+      problem_table
+      wire_exit_options
+    elif [ "$option" = "s" ]; then
+      echo -e " \e[33mSaved networks in "$wpa_supplicant_file"\e[0m"
+      line
+      echo -e "\e[90m"
+      cat $wpa_supplicant_file | grep -v '^#' | grep "ssid" | awk -F "=" '{print $2}'
+      echo -e "\e[0m"
+      line
+      wire_exit_options
+    elif [ "$option" = "n" ]; then
+      echo " Network configuration "
+      line
+      echo -e " \e[33mInterfaces: /etc/network/interfaces \e[0m"
+      line
+      echo -e "\e[90m"
+      cat /etc/network/interfaces
+      echo -e "\e[0m"
+      line
+      echo -e " \e[33mWpa configuration: "$wpa_supplicant_file"\e[0m"
+      line
+      echo -e "\e[90m"
+      cat /etc/network/interfaces
+      echo -e "\e[0m"
+      line
+      echo -e " \e[33mNameserver configuration: /etc/resolv.conf \e[0m"
+      line
+      echo -e "\e[90m"
+      cat /etc/resolv.conf
+      echo -e "\e[0m"
+      line
+      echo -e " \e[33mHosts file: /etc/hosts \e[0m"
+      line
+      echo -e "\e[90m"
+      cat /etc/hosts
+      echo -e "\e[0m"
+      line
+      wire_exit_options
+    elif [ "$option" = "l" ]; then
+      if [ $save_log = true ]; then
+        echo -e " \e[33mLog: "$log_file"\e[0m"
+        line
+        echo -e "\e[90m"
+        cat $log_file
+        echo -e "\e[0m"
+        line
+        wire_exit_options
+      else
+        echo -e " \e[31mNo log for this session, set variable save_log=true and restart wire\e[0m"
+        line
+        wire_exit_options
+      fi
+    else
+      echo -e " \e[31mWrong option selected\e[0m"
+      line
+      wire_exit_options
+    fi
   }
 
 # setup
@@ -216,7 +309,11 @@ trap wire_end EXIT
     wpa_cli -i $interface set ignore_old_scan_res 1 &> /dev/null
     wpa_cli -i $interface set disassoc_low_ack 1 &> /dev/null
     wpa_cli -i $interface set ap_max_inactivity 90 &> /dev/null
+    wpa_cli -i $interface set persistent_reconnect 1 &> /dev/null
+    wpa_cli -i $interface set save_config 1 &> /dev/null
     wpa_cli -i $interface set update_config 1 &> /dev/null
+    wpa_cli -i $interface reconfigure &> /dev/null
+    sleep 1
     setup_nameserver_verify
   }
 
@@ -231,6 +328,64 @@ trap wire_end EXIT
     echo -e "\e[32mok\e[0m"
     line
     wire_init
+  }
+
+  function setup_manual_ssid {
+    network_id=$(wpa_cli -i wlan1 list_network | grep $ssid | awk -F " " '{print $1}')
+    if [ "$network_id" = "" ]; then
+      echo -e " \e[31mThe SSID selected is not configured in: "$wpa_supplicant_file"\e[0m"
+      echo -e " \e[31mList of your saved networks\e[0m"
+      line
+      echo -e "\e[90m"
+      cat $wpa_supplicant_file | grep -v '^#' | grep "ssid" | awk -F "=" '{print $2}'
+      echo -e "\e[0m"
+      line
+      sleep $pause_max
+      echo -e " [\e[90m"$(date +"%T")"\e[0m] Continuing with automatic network selection "
+      line
+      dhcp
+    else
+      wpa_cli -i $interface select_network $network_id &> /dev/null
+      if [ $? = 0 ]; then
+        wpa_cli -i $interface reconfigure &> /dev/null
+        sleep $pause_max
+        dhcp
+      else
+        error="state"
+        problem $error
+      fi
+    fi
+  }
+
+  function setup_manual_selection {
+    line
+    echo -en " [\e[90m"$(date +"%T")"\e[0m] Scanning: "
+    list=($(iwlist $interface scan 2>/dev/null | awk -F":" '/ESSID/{print $2}'))
+    if [ "$list" = "" ]; then
+      echo -e "\e[31merror\e[0m"
+      line
+      echo -e " [\e[90m"$(date +"%T")"\e[0m] \e[31mNo network available \e[0m"
+      line
+      setup_exit
+    else
+      echo -e "\e[32mok\e[0m"
+      line
+      echo -e " [\e[90m"$(date +"%T")"\e[0m] \e[33mSelect a network (type number)\e[0m"
+      line
+      select item in "${list[@]}"; do
+        ssid=$(echo ${item//\"/})
+        line
+        if [ "$ssid" = "" ]; then
+          echo -e " [\e[90m"$(date +"%T")"\e[0m] \e[31mSelection not valid\e[0m"
+          line
+          setup_exit
+        else
+          echo -e " \e[33mSSID: "$ssid"\e[0m"
+          line
+          setup_manual_ssid
+        fi
+      done
+    fi
   }
 
 # interface
@@ -271,6 +426,8 @@ trap wire_end EXIT
     dhclient -r $interface &> /dev/null
     sleep $pause_min
     ip addr flush dev $interface &> /dev/null
+    sleep $pause_min
+    wpa_cli -i $interface flush &> /dev/null
     if [ $? = 0 ]; then
       echo -e "\e[32mok\e[0m"
       interface_down
@@ -352,8 +509,10 @@ trap wire_end EXIT
 
   function interface_reassociate {
     echo -en " [\e[90m"$(date +"%T")"\e[0m] Attempt to reassociate with lost network"
-    wpa_cli -i $interface reassociate &> /dev/null
+    wpa_cli -i $interface reauthenticate &> /dev/null
     if [ $? = 0 ]; then
+      wpa_cli -i $interface reassociate &> /dev/null
+      sleep $pause_min
       connection_state_verify
     else
       interface_scan
@@ -433,7 +592,6 @@ trap wire_end EXIT
           echo
           echo -e " [\e[90m"$(date +"%T")"\e[0m] IP address: "$source_addr
           ping_loop
-          break 1
         else
           echo -en "\e[33m.\e[0m"
         fi
@@ -441,7 +599,6 @@ trap wire_end EXIT
         echo
         error="timeout_dhcp"
         problem $error
-        break 1
       fi
       count_dhcp=$((count_dhcp + 1))
       sleep $pause_min
@@ -512,22 +669,18 @@ trap wire_end EXIT
         if [ $state = "COMPLETED" ]; then
           echo
           interface_ip
-          break 1
         elif [ "$state" = "DISCONNECTED" ]; then
           echo
           error="disconnected"
           problem $error
-          break 1
         elif [ "$state" = "" ]; then
           echo
           error="no-state"
           problem $error
-          break 1
         elif [ "$state" = "INTERFACE_DISABLED" ]; then
           echo
           error="disabled"
           problem $error
-          break 1
         elif [ "$state" = "SCANNING" ]; then
           sleep $pause_min
           echo -n "."
@@ -539,7 +692,6 @@ trap wire_end EXIT
         echo
         error="timeout_state"
         problem $error
-        break 1
       fi
       state="none"
       sleep $pause_max
@@ -577,7 +729,6 @@ trap wire_end EXIT
         signal_check=$(cat /proc/net/wireless | grep $interface)
         if [ "$signal_check" = "" ]; then
           connection_lost
-          break 1
         else
           print=$(output)
           echo "$print"
@@ -585,7 +736,6 @@ trap wire_end EXIT
       else
         cicles=0
         dns_verify
-        break 1
       fi
       cicles=$((cicles + 1))
       signal_check="none"
@@ -640,11 +790,9 @@ trap wire_end EXIT
       fi
     elif [ "$issue" = "state" ]; then
       error_scan=$((error_scan + 1))
-      problem_table
       interface_ip
     elif [ "$issue" = "timeout_state" ]; then
       error_timeout_state=$((error_timeout_state + 1))
-      problem_table
       interface_down
     elif [ "$issue" = "disconnected" ]; then
       error_disconnected=$((error_disconnected + 1))
@@ -663,7 +811,6 @@ trap wire_end EXIT
       fi
     elif [ "$issue" = "timeout_dhcp" ]; then
       error_timeout_dhcp=$((error_timeout_dhcp + 1))
-      problem_table
       interface_reassociate
     elif [ "$issue" = "timeout_dhcp_loops" ]; then
       error_timeout_dhcp_loops=$((error_timeout_dhcp_loops + 1))
@@ -672,7 +819,6 @@ trap wire_end EXIT
       interface_reboot
     elif [ "$issue" = "timeout_ping" ]; then
       error_timeout_ping=$((error_timeout_ping + 1))
-      problem_table
       count_ping=0
       interface_reassociate
     elif [ "$issue" = "timeout_ping_loops" ]; then
@@ -684,7 +830,6 @@ trap wire_end EXIT
       error_undefined=$((error_undefined + 1))
       problem_table
     fi
-    sleep $pause_max
     interface_reboot
   }
 
@@ -694,22 +839,28 @@ trap wire_end EXIT
     line
     echo " Interface ("$interface")"
     line
+    echo -en "\e[90m"
     echo " Disconnected        : "$error_disconnected
     echo " Disabled            : "$error_disabled
     echo " Interface errors    : "$error_reboot
     echo " WPA state errors    : "$error_scan
     echo " WPA state timeouts  : "$error_timeout_state
     echo " No interface state  : "$error_no_state
+    echo -en "\e[0m"
     line
     echo " Connection"
     line
+    echo -en "\e[90m"
     echo " DHCP timeouts       : "$error_timeout_dhcp
     echo " DHCP loops timeout  : "$error_timeout_dhcp_loops
     echo " Ping timeout        : "$error_timeout_ping
     echo " Ping loop timeout   : "$error_timeout_ping_loops
     echo " Total restore pings : "$count_restore_pings
+    echo -en "\e[0m"
     line
+    echo -en "\e[90m"
     echo " Undefined errors    : "$error_undefined
+    echo -en "\e[0m"
     line
     sleep $pause_min
   }
